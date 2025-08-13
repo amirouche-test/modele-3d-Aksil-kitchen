@@ -6,22 +6,29 @@ import { OrbitControls } from "@react-three/drei";
 import { GLTFLoader } from "three-stdlib";
 
 export default function ModelViewer() {
-  const [modelData, setModelData] = useState(null);      // JSON avec chemins des modèles
-  const [colorsData, setColorsData] = useState(null);    // JSON avec couleurs par variante
-  const [baseModel, setBaseModel] = useState(null);      // modèle de base chargé
-  const [models, setModels] = useState({});              // variantes chargées (obj motifs -> liste scènes)
-  const [activeVariants, setActiveVariants] = useState({}); // variantes actives par motif
-  const [openMotifs, setOpenMotifs] = useState({});      // état ouvert/fermé des motifs (accordéon)
-  const [loadingModels, setLoadingModels] = useState(true); // loader pour le modèle complet
+  const [modelData, setModelData] = useState(null);
+  const [colorsData, setColorsData] = useState(null);
+  const [baseModel, setBaseModel] = useState(null);
+  const [models, setModels] = useState({});
+  const [activeVariants, setActiveVariants] = useState({});
+  const [openMotifs, setOpenMotifs] = useState({});
+  const [loadingBase, setLoadingBase] = useState(true);
+  const [loadingVariants, setLoadingVariants] = useState(true);
 
+  const loader = new GLTFLoader();
+
+  // Charger fichiers JSON
   useEffect(() => {
     async function loadJSONs() {
-      // Charger les fichiers JSON
-      const resModels = await fetch("/models.json");
-      const modelsJSON = await resModels.json();
+      const [modelsRes, colorsRes] = await Promise.all([
+        fetch("/models.json"),
+        fetch("/couleurs.json"),
+      ]);
 
-      const resColors = await fetch("/couleurs.json");
-      const colorsJSON = await resColors.json();
+      const [modelsJSON, colorsJSON] = await Promise.all([
+        modelsRes.json(),
+        colorsRes.json(),
+      ]);
 
       setModelData(modelsJSON);
       setColorsData(colorsJSON);
@@ -29,19 +36,22 @@ export default function ModelViewer() {
     loadJSONs();
   }, []);
 
+  // Charger modèle de base
+  useEffect(() => {
+    if (!modelData) return;
+    async function loadBase() {
+      const base = await loader.loadAsync(modelData.base_model);
+      setBaseModel(base.scene);
+      setLoadingBase(false);
+    }
+    loadBase();
+  }, [modelData]);
+
+  // Charger variantes
   useEffect(() => {
     if (!modelData) return;
 
-    const loader = new GLTFLoader();
-
-    async function loadModels() {
-      setLoadingModels(true);
-
-      // Charger modèle de base
-      const base = await loader.loadAsync(modelData.base_model);
-      setBaseModel(base.scene);
-
-      // Charger variantes de tous les motifs
+    async function loadVariants() {
       const loaded = {};
       const actives = {};
 
@@ -50,33 +60,31 @@ export default function ModelViewer() {
         loaded[motifKey] = [];
 
         for (let j = 1; j <= 10; j++) {
-          const path = modelData[motifKey][j - 1] + ".glb"; // ajoute .glb à la fin
+          const path = modelData[motifKey][j - 1] + ".glb";
           const gltf = await loader.loadAsync(path);
           loaded[motifKey].push(gltf.scene);
         }
-
-        // Variante initiale : par exemple, i-1 (motif-1 = variante 0, motif-2 variante 1 ...)
         actives[motifKey] = (i - 1) % 10;
       }
 
       setModels(loaded);
       setActiveVariants(actives);
 
-      // Par défaut, ouvrir tous les motifs (optionnel)
+      // État ouvert/fermé par défaut
       const openState = {};
-      for (let i = 1; i <= 7; i++) openState[`motif-${i}`] = false; // tous fermés par défaut
+      for (let i = 1; i <= 7; i++) openState[`motif-${i}`] = false;
       setOpenMotifs(openState);
 
-      setLoadingModels(false); // Chargement complet terminé
+      setLoadingVariants(false);
     }
-    loadModels();
+
+    loadVariants();
   }, [modelData]);
 
   function changeVariant(motif, index) {
     setActiveVariants((prev) => ({ ...prev, [motif]: index }));
   }
 
-  // Toggle ouverture/fermeture motif (accordéon)
   function toggleMotif(motif) {
     setOpenMotifs((prev) => ({
       ...prev,
@@ -84,142 +92,99 @@ export default function ModelViewer() {
     }));
   }
 
-  if (!baseModel || !modelData || !colorsData)
-    return (
-      null
-    );
-
   return (
-    <div style={{ display: "flex", height: "90vh" }}>
-      <div
-        className="bg-neutral-500 w-full"
-        style={{ position: "relative" }}
-      >
-        {/* Loader superposé */}
-        {loadingModels && (
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              backgroundColor: "rgba(0,0,0,0.85)",
-              zIndex: 10,
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-              color: "#fff",
-              fontSize: 20,
-              fontWeight: "bold",
-            }}
-          >
-            Loading 3D Model ...
+    <div className="flex flex-col md:flex-row min-h-[90vh]">
+      {/* Zone Canvas */}
+      <div className="relative flex-1 bg-neutral-400">
+        {loadingBase && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-10 text-white">
+            <div className="w-12 h-12 border-4 border-white border-t-transparent rounded-full animate-spin" />
+            <p className="mt-4 text-lg font-semibold">
+              Chargement du modèle...
+            </p>
           </div>
         )}
 
-<Canvas camera={{ position: [550, 350, 550], fov: 50 }}>
+<Canvas camera={{ position: [500, 300, -100], fov: 50 }}>
   <ambientLight intensity={1} />
-  <directionalLight position={[5, 5, 10]} intensity={4} />
+  <directionalLight position={[1, 1, 1]} intensity={4} />
 
-  <OrbitControls
-    // target={[0, 0, 0]}        // point central sur lequel la caméra regarde
-    // minDistance={50}         // zoom min (proche)
-    // // maxDistance={10}          // zoom max (loin)
-    // zoomSpeed={1}             // vitesse zoom molette (1 par défaut)
-    // rotateSpeed={1}           // vitesse rotation souris (1 par défaut)
-    // panSpeed={1}              // vitesse déplacement panoramique (1 par défaut)
-  />
+          <OrbitControls />
 
-  {/* Modèle de base */}
-  <primitive object={baseModel} />
-
-  {/* Variantes actives */}
-  {Object.keys(models).map((motif) => {
-    const modelList = models[motif];
-    const activeIndex = activeVariants[motif];
-    if (!modelList || activeIndex === undefined) return null;
-
-    const sceneClone = modelList[activeIndex]?.clone();
-    return sceneClone ? <primitive key={motif} object={sceneClone} /> : null;
-  })}
-</Canvas>
-
+          {baseModel && <primitive object={baseModel} />}
+          {!loadingVariants &&
+            Object.keys(models).map((motif) => {
+              const activeIndex = activeVariants[motif];
+              if (!models[motif] || activeIndex === undefined) return null;
+              const sceneClone = models[motif][activeIndex]?.clone();
+              return sceneClone ? (
+                <primitive key={motif} object={sceneClone} />
+              ) : null;
+            })}
+        </Canvas>
       </div>
 
-      {/* Panneau des variantes avec accordéon */}
-      <div
-        style={{
-          width: 250,
-          padding: 10,
-          overflowY: "auto",
-          borderLeft: "1px solid #ddd",
-          userSelect: "none",
-        }}
-      >
-        {Object.keys(modelData)
-          .filter((key) => key !== "base_model")
-          .map((motif) => {
-            const activeIndex = activeVariants[motif];
-            const activeColor = colorsData ? colorsData[`variante-${activeIndex + 1}`] : "#999";
+      {/* Panneau latéral */}
+      <div className="w-full md:w-64 p-3 overflow-y-auto border-t md:border-t-0 md:border-l border-gray-300 bg-white">
+        {loadingVariants ? (
+          <div className="animate-pulse">
+            {Array.from({ length: 7 }).map((_, i) => (
+              <div key={i} className="h-6 bg-gray-300 rounded mb-4"></div>
+            ))}
+          </div>
+        ) : (
+          Object.keys(modelData)
+            .filter((key) => key !== "base_model")
+            .map((motif) => {
+              const activeIndex = activeVariants[motif];
+              const activeColor =
+                colorsData[`variante-${activeIndex + 1}`] || "#999";
 
-            return (
-              <div key={motif} style={{ marginBottom: 20 }}>
-                <h3
-                  onClick={() => toggleMotif(motif)}
-                  style={{
-                    cursor: "pointer",
-                    marginBottom: 8,
-                    backgroundColor: "#eee",
-                    padding: "6px 10px",
-                    borderRadius: 4,
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                  }}
-                >
-                  {/* Cercle couleur active */}
-                  <div
-                    style={{
-                      width: 16,
-                      height: 16,
-                      borderRadius: "50%",
-                      backgroundColor: activeColor,
-                      marginRight: 8,
-                      border: "1px solid #444",
-                      flexShrink: 0,
-                    }}
-                  />
-                  {motif.toUpperCase()}
-                  <span style={{ fontSize: 14 }}>{openMotifs[motif] ? "▲" : "▼"}</span>
-                </h3>
+              return (
+                <div key={motif} className="mb-5">
+                  {/* Titre */}
+                  <h3
+                    onClick={() => toggleMotif(motif)}
+                    className="cursor-pointer mb-2 bg-gray-200 hover:bg-gray-300 transition rounded px-3 py-1 flex justify-between items-center"
+                  >
+                    <div
+                      className="w-4 h-4 rounded-full border border-gray-800 mr-2 flex-shrink-0"
+                      style={{ backgroundColor: activeColor }}
+                    />
+                    <span className="flex-1">{motif.toUpperCase()}</span>
+                    <span className="text-sm">
+                      {openMotifs[motif] ? "▲" : "▼"}
+                    </span>
+                  </h3>
 
-                {/* Variantes - affichées seulement si ouvert */}
-                {openMotifs[motif] && (
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                    {modelData[motif].map((_, idx) => {
-                      const color = colorsData[`variante-${idx + 1}`] || "#999";
-                      const isActive = activeVariants[motif] === idx;
-                      return (
-                        <div
-                          key={idx}
-                          onClick={() => changeVariant(motif, idx)}
-                          title={`Variante ${idx + 1}`}
-                          style={{
-                            width: 24,
-                            height: 24,
-                            borderRadius: "50%",
-                            backgroundColor: color,
-                            border: isActive ? "3px solid #000" : "1px solid #ccc",
-                            cursor: "pointer",
-                            boxSizing: "border-box",
-                            transition: "border-color 0.3s",
-                          }}
-                        />
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+                  {/* Variantes */}
+                  {openMotifs[motif] && (
+                    <div className="flex flex-wrap gap-2">
+                      {modelData[motif].map((_, idx) => {
+                        const color =
+                          colorsData[`variante-${idx + 1}`] || "#999";
+                        const isActive = activeVariants[motif] === idx;
+                        return (
+                          <div
+                            key={idx}
+                            onClick={() => changeVariant(motif, idx)}
+                            title={`Variante ${idx + 1}`}
+                            className={`w-6 h-6 rounded-full border cursor-pointer transition 
+                              ${
+                                isActive
+                                  ? "border-2 border-black"
+                                  : "border border-gray-300"
+                              }`}
+                            style={{ backgroundColor: color }}
+                          />
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+        )}
       </div>
     </div>
   );
